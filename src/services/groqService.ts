@@ -1,6 +1,7 @@
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const CV_PARSER_MODEL = "llama-3.1-8b-instant";
 const OUTREACH_MODEL = "llama-3.3-70b-versatile";
+const MAX_BASE64_CONTEXT_LENGTH = 12000;
 const groqApiKey = process.env.GROQ_API_KEY;
 
 export interface StudentProfile {
@@ -49,6 +50,15 @@ function decodeBase64Utf8(base64Data: string): string {
   const binaryString = atob(base64Data);
   const bytes = Uint8Array.from(binaryString, (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);
+}
+
+function truncateBase64ForContext(base64Data: string): string {
+  if (base64Data.length < 4) {
+    return base64Data;
+  }
+  const maxLength = Math.min(base64Data.length, MAX_BASE64_CONTEXT_LENGTH);
+  const safeLength = maxLength - (maxLength % 4);
+  return base64Data.slice(0, safeLength || 4);
 }
 
 async function createStructuredCompletion(model: string, prompt: string): Promise<string> {
@@ -100,7 +110,7 @@ export async function parseCV(base64Data: string, mimeType: string): Promise<Par
   if (mimeType.startsWith("text/")) {
     cvContentForModel = decodeBase64Utf8(base64Data);
   } else {
-    cvContentForModel = `CV file MIME type: ${mimeType}. Raw base64 (truncated): ${base64Data.slice(0, 12000)}`;
+    cvContentForModel = `CV file MIME type: ${mimeType}. Raw base64 (truncated): ${truncateBase64ForContext(base64Data)}`;
   }
 
   const prompt = `
@@ -155,13 +165,14 @@ Professor Information:
 - Website: ${professor.websiteUrl}
 - Google Scholar/ResearchGate: ${professor.scholarUrl}
 
-Task 1: Research the Professor
-Use the provided professor information to infer:
+Task 1: Analyze the Professor Information
+Use only the provided professor fields and student profile to infer:
 1. Likely recent publications, key themes, methodologies, and findings.
 2. Active research areas and lab focus.
 3. Ongoing or recently funded projects where possible.
 4. Any likely lab openings or student opportunities.
 5. Analyze the alignment between the student's background and the professor's work.
+Do not claim you accessed websites or external tools.
 
 If research data is sparse, gracefully acknowledge this and generate the best possible email with what's available. Flag low-confidence sections in the confidenceNotes.
 

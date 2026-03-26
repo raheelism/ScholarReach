@@ -1,7 +1,11 @@
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+const OPENALEX_API_URL = "https://api.openalex.org/works";
 const CV_PARSER_MODEL = "llama-3.1-8b-instant";
 const OUTREACH_MODEL = "llama-3.3-70b-versatile";
 const MAX_BASE64_CONTEXT_LENGTH = 12000;
+const MAX_PUBLICATIONS_FOR_PROMPT = 5;
+const MAX_RESEARCH_AREAS_FOR_PROMPT = 6;
+const MAX_PROJECT_HINTS_FOR_PROMPT = 3;
 const groqApiKey = process.env.GROQ_API_KEY;
 
 export interface StudentProfile {
@@ -59,6 +63,76 @@ function truncateBase64ForContext(base64Data: string): string {
   const maxLength = Math.min(base64Data.length, MAX_BASE64_CONTEXT_LENGTH);
   const safeLength = maxLength - (maxLength % 4);
   return base64Data.slice(0, safeLength || 4);
+}
+
+type OpenAlexWork = {
+  title?: string;
+  publication_year?: number;
+  primary_topic?: { display_name?: string; subfield?: { display_name?: string } };
+  concepts?: Array<{ display_name?: string; score?: number }>;
+};
+
+function toTokenEfficientText(items: string[], maxItems: number): string[] {
+  return items
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, maxItems)
+    .map((item) => item.length > 140 ? `${item.slice(0, 137)}...` : item);
+}
+
+async function fetchProfessorWebContext(professor: ProfessorProfile): Promise<{
+  publications: string[];
+  researchAreas: string[];
+  projects: string[];
+}> {
+  const query = [professor.name, professor.university, professor.department]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(" ");
+
+  if (!query) {
+    return { publications: [], researchAreas: [], projects: [] };
+  }
+
+  const response = await fetch(
+    `${OPENALEX_API_URL}?search=${encodeURIComponent(query)}&per-page=${MAX_PUBLICATIONS_FOR_PROMPT}&sort=publication_date:desc`
+  );
+
+  if (!response.ok) {
+    throw new Error(`OpenAlex request failed (${response.status})`);
+  }
+
+  const data = (await response.json()) as { results?: OpenAlexWork[] };
+  const works = data.results ?? [];
+  const publications = toTokenEfficientText(
+    works
+      .map((work) => {
+        const title = work.title?.trim();
+        if (!title) return "";
+        const year = work.publication_year ? ` (${work.publication_year})` : "";
+        return `${title}${year}`;
+      }),
+    MAX_PUBLICATIONS_FOR_PROMPT
+  );
+
+  const areaSet = new Set<string>();
+  for (const work of works) {
+    if (work.primary_topic?.display_name) {
+      areaSet.add(work.primary_topic.display_name);
+    }
+    if (work.primary_topic?.subfield?.display_name) {
+      areaSet.add(work.primary_topic.subfield.display_name);
+    }
+    for (const concept of work.concepts ?? []) {
+      if ((concept.score ?? 0) >= 0.35 && concept.display_name) {
+        areaSet.add(concept.display_name);
+      }
+    }
+  }
+  const researchAreas = toTokenEfficientText(Array.from(areaSet), MAX_RESEARCH_AREAS_FOR_PROMPT);
+  const projects = publications.slice(0, MAX_PROJECT_HINTS_FOR_PROMPT);
+
+  return { publications, researchAreas, projects };
 }
 
 async function createStructuredCompletion(model: string, prompt: string): Promise<string> {
@@ -142,6 +216,17 @@ export async function generateOutreachEmail(
   professor: ProfessorProfile,
   tone: "Formal" | "Conversational" | "Concise" = "Formal"
 ): Promise<EmailDraft> {
+  let webContext = {
+    publications: [] as string[],
+    researchAreas: [] as string[],
+    projects: [] as string[],
+  };
+  try {
+    webContext = await fetchProfessorWebContext(professor);
+  } catch {
+    // Continue gracefully with provided form data only.
+  }
+
   const prompt = `
 You are an expert academic advisor helping a student write a highly personalized, research-aligned outreach email to a professor for a ${student.program} opportunity.
 
@@ -165,14 +250,19 @@ Professor Information:
 - Website: ${professor.websiteUrl}
 - Google Scholar/ResearchGate: ${professor.scholarUrl}
 
+Free web research context (OpenAlex, lightweight):
+- Publications: ${webContext.publications.join(" | ") || "Not available"}
+- Research areas: ${webContext.researchAreas.join(" | ") || "Not available"}
+- Project hints: ${webContext.projects.join(" | ") || "Not available"}
+
 Task 1: Analyze the Professor Information
-Use only the provided professor fields and student profile to infer:
+Use provided form fields, student profile, and web research context when available:
 1. Likely recent publications, key themes, methodologies, and findings.
 2. Active research areas and lab focus.
 3. Ongoing or recently funded projects where possible.
 4. Any likely lab openings or student opportunities.
 5. Analyze the alignment between the student's background and the professor's work.
-Do not claim you accessed websites or external tools.
+If web context is missing, explicitly state reduced confidence in confidenceNotes.
 
 If research data is sparse, gracefully acknowledge this and generate the best possible email with what's available. Flag low-confidence sections in the confidenceNotes.
 

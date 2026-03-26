@@ -16,5 +16,6 @@ View your app in AI Studio: https://ai.studio/apps/1bf77322-6a25-426a-af2e-d552d
 1. Install dependencies:
    `npm install`
 2. Set the `GROQ_API_KEY` in [.env.local](.env.local) to your Groq API key
+   - The app also performs lightweight free professor research via OpenAlex (no additional API key required).
 3. Run the app:
    `npm run dev`

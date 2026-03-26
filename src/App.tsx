@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Toaster, toast } from "sonner";
-import { StudentProfile, ProfessorProfile, EmailDraft, generateOutreachEmail, parseCV } from "./services/geminiService";
+import { StudentProfile, ProfessorProfile, EmailDraft, generateOutreachEmail, parseCV } from "./services/groqService";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";

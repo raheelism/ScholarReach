@@ -6,6 +6,9 @@ const MAX_BASE64_CONTEXT_LENGTH = 12000;
 const MAX_PUBLICATIONS_FOR_PROMPT = 5;
 const MAX_RESEARCH_AREAS_FOR_PROMPT = 6;
 const MAX_PROJECT_HINTS_FOR_PROMPT = 3;
+const MAX_CONTEXT_ITEM_LENGTH = 140;
+const ELLIPSIS_LENGTH = 3;
+const MIN_CONCEPT_SCORE_THRESHOLD = 0.35;
 const groqApiKey = process.env.GROQ_API_KEY;
 
 export interface StudentProfile {
@@ -77,7 +80,11 @@ function toTokenEfficientText(items: string[], maxItems: number): string[] {
     .map((item) => item.trim())
     .filter(Boolean)
     .slice(0, maxItems)
-    .map((item) => item.length > 140 ? `${item.slice(0, 137)}...` : item);
+    .map((item) =>
+      item.length > MAX_CONTEXT_ITEM_LENGTH
+        ? `${item.slice(0, MAX_CONTEXT_ITEM_LENGTH - ELLIPSIS_LENGTH)}...`
+        : item
+    );
 }
 
 async function fetchProfessorWebContext(professor: ProfessorProfile): Promise<{
@@ -124,7 +131,7 @@ async function fetchProfessorWebContext(professor: ProfessorProfile): Promise<{
       areaSet.add(work.primary_topic.subfield.display_name);
     }
     for (const concept of work.concepts ?? []) {
-      if ((concept.score ?? 0) >= 0.35 && concept.display_name) {
+      if ((concept.score ?? 0) >= MIN_CONCEPT_SCORE_THRESHOLD && concept.display_name) {
         areaSet.add(concept.display_name);
       }
     }
@@ -223,7 +230,8 @@ export async function generateOutreachEmail(
   };
   try {
     webContext = await fetchProfessorWebContext(professor);
-  } catch {
+  } catch (error) {
+    console.warn("OpenAlex web context fetch failed; continuing without web context.", error);
     // Continue gracefully with provided form data only.
   }
 
